@@ -1,65 +1,39 @@
-from fastapi import FastAPI, HTTPException, Query, Depends
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine
+from pydantic import BaseModel, ValidationError
 from weasyprint import HTML
-import os
-from dotenv import load_dotenv
-import os
-
-# Cargar las variables del archivo .env
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("La variable de entorno DATABASE_URL no está configurada.")
+from typing import Dict
+from datetime import datetime
 
 # Crear la aplicación FastAPI
 app = FastAPI()
 
-# Configuración de la base de datos
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("La variable de entorno DATABASE_URL no está configurada.")
-    
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Modelo Pydantic para validar el JSON recibido
+class ComparisonData(BaseModel):
+    user: str
+    billing_period_start: str
+    billing_period_end: str
+    measurement_start: str
+    measurement_end: str
+    comparison_results: Dict
+    is_comparison_valid: bool
 
 # Endpoint para descargar el reporte
-@app.get("/download_report")
-async def download_report(
-    id: int = Query(..., description="ID de la comparación"),
-    user: str = Query(..., description="Usuario autenticado"),
-    db: SessionLocal = Depends(get_db)
-):
+@app.post("/download_report")
+async def download_report(data: ComparisonData):  # Validamos el JSON enviado en el cuerpo
     try:
-        # Buscar el objeto de comparación en la base de datos usando SQL seguro
-        comparison = db.execute(
-            "SELECT * FROM invoice_comparison WHERE id = :id AND user = :user",
-            {"id": id, "user": user}
-        ).fetchone()
-
-        if not comparison:
-            raise HTTPException(status_code=404, detail="No se encontró la comparación solicitada.")
-
         # Preparar datos para el reporte
         billing_period = {
-            "status": "Sin discrepancia" if comparison.is_comparison_valid else "Con discrepancia",
-            "invoice_start_date": comparison.invoice_billing_period_start,
-            "invoice_end_date": comparison.invoice_billing_period_end,
-            "measurement_start_date": comparison.measurement_start,
-            "measurement_end_date": comparison.measurement_end,
-            "days_billed": (comparison.invoice_billing_period_end - comparison.invoice_billing_period_start).days
+            "status": "Sin discrepancia" if data.is_comparison_valid else "Con discrepancia",
+            "invoice_start_date": data.billing_period_start,
+            "invoice_end_date": data.billing_period_end,
+            "measurement_start_date": data.measurement_start,
+            "measurement_end_date": data.measurement_end,
+            "days_billed": (
+                (datetime.fromisoformat(data.billing_period_end) - datetime.fromisoformat(data.billing_period_start)).days
+            ),
         }
-
-        comparison_results = comparison.comparison_results
+        comparison_results = data.comparison_results
         consumption_details = {
             "Invoice": {
                 "invoice": comparison_results['detalles_consumo']['total_consumption_kwh']['invoice'],
@@ -109,5 +83,7 @@ async def download_report(
             "Content-Disposition": "attachment; filename=report.pdf"
         })
 
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail="Datos inválidos")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error del servidor: {str(e)}")
