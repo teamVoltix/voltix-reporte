@@ -20,10 +20,14 @@ fastapi dev main.py
 
 # Specify FastAPI's Port 8080
 uvicorn main:app --host 127.0.0.1 --port 8080 --reload
-
+# Windows
+python -m uvicorn src.main:app --reload --port 8002
 
 # Check port to not have conflicts
 ## macOS/Linux
 netstat -tuln | grep 8080
 ## Windows
 netstat -ano | find "8080"
+
+# Tests
+pytest -v src/tests.py
